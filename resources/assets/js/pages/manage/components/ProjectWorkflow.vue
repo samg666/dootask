@@ -1,17 +1,24 @@
 <template>
     <div class="project-workflow">
         <div class="workflow-title">
-            {{$L('工作流设置')}}
-            <div class="title-icon">
-                <Loading v-if="loadIng > 0"/>
-                <Icon v-else type="ios-refresh" @click="getData"/>
+            <div class="title-left">
+                {{$L('工作流设置')}}
+                <div class="title-icon">
+                    <Loading v-if="loadIng > 0"/>
+                    <Icon v-else type="ios-refresh" @click="getData"/>
+                </div>
+            </div>
+            <div v-if="list.length > 0" class="title-right">
+                <Button type="primary" icon="md-add" @click="onCreate">{{$L('添加工作流')}}</Button>
             </div>
         </div>
         <div v-if="list.length > 0" class="workflow-content">
             <Collapse v-model="openIndex" accordion>
                 <Panel v-for="data in list" :key="data.id" :name="'index_' + data.id">
                     <div class="workflow-item">
-                        <div class="workflow-name">{{data.name}}</div>
+                        <div class="workflow-name">
+                            <QuickEdit :value="data.name" @on-update="updateName(arguments, data)" alwaysIcon>{{data.name}}</QuickEdit>
+                        </div>
                         <div class="workflow-status">
                             <div v-for="item in data.project_flow_item" :class="item.status">{{item.name}}</div>
                         </div>
@@ -133,7 +140,7 @@
         </div>
         <div v-else-if="loadIng == 0" class="workflow-no">
             {{$L('当前项目还没有创建工作流')}}
-            <Button type="primary" @click="onCreate">{{$L('创建工作流')}}</Button>
+            <Button type="primary" icon="md-add" @click="onCreate">{{$L('创建工作流')}}</Button>
         </div>
 
         <!--成员管理-->
@@ -220,7 +227,6 @@ export default {
                     item.project_flow_bak = JSON.stringify(item.project_flow_item)
                     return item;
                 });
-                this.openIndex = this.list.length === 1 ? ("index_" + this.list[0].id) : ""
                 this.$nextTick(this.syncScroller);
             }).catch(({msg}) => {
                 this.loadIng--;
@@ -256,46 +262,63 @@ export default {
 
         onCreate() {
             let id = -1 * $A.randNum(1000, 10000);
-            this.list.push({
-                "id": id,
-                "name": "Default",
-                "project_flow_item": [
-                    {
-                        "id": -10,
-                        "name": "待处理",
-                        "status": "start",
-                        "turns": [-10, -11, -12, -13],
-                        "userids": [],
-                        "usertype": 'add',
-                    },
-                    {
-                        "id": -11,
-                        "name": "进行中",
-                        "status": "progress",
-                        "turns": [-10, -11, -12, -13],
-                        "userids": [],
-                        "usertype": 'add',
-                    },
-                    {
-                        "id": -12,
-                        "name": "已完成",
-                        "status": "end",
-                        "turns": [-10, -11, -12, -13],
-                        "userids": [],
-                        "usertype": 'add',
-                    },
-                    {
-                        "id": -13,
-                        "name": "已取消",
-                        "status": "end",
-                        "turns": [-10, -11, -12, -13],
-                        "userids": [],
-                        "usertype": 'add',
-                    }
-                ]
+            this.createInput().then(name => {
+                this.list.push({
+                    id,
+                    name,
+                    project_flow_item: [
+                        {
+                            "id": -10,
+                            "name": "待处理",
+                            "status": "start",
+                            "turns": [-10, -11, -12, -13],
+                            "userids": [],
+                            "usertype": 'add',
+                        },
+                        {
+                            "id": -11,
+                            "name": "进行中",
+                            "status": "progress",
+                            "turns": [-10, -11, -12, -13],
+                            "userids": [],
+                            "usertype": 'add',
+                        },
+                        {
+                            "id": -12,
+                            "name": "已完成",
+                            "status": "end",
+                            "turns": [-10, -11, -12, -13],
+                            "userids": [],
+                            "usertype": 'add',
+                        },
+                        {
+                            "id": -13,
+                            "name": "已取消",
+                            "status": "end",
+                            "turns": [-10, -11, -12, -13],
+                            "userids": [],
+                            "usertype": 'add',
+                        }
+                    ]
+                })
+                this.openIndex = "index_" + id;
+                this.$nextTick(this.syncScroller);
             })
-            this.openIndex = "index_" + id;
-            this.$nextTick(this.syncScroller);
+        },
+
+        createInput() {
+            return new Promise(resolve => {
+                $A.modalInput({
+                    title: "创建工作流",
+                    placeholder: "输入名称（如：任务、里程牌、缺陷）",
+                    onOk: (value) => {
+                        if (value) {
+                            resolve(value)
+                        }
+                        return true;
+                    }
+                });
+            })
         },
 
         onDelete(data) {
@@ -423,6 +446,35 @@ export default {
             this.$set(data, 'project_flow_item', JSON.parse(data.project_flow_bak))
         },
 
+        updateName([newName, callback], formData) {
+            if (!newName) {
+                callback()
+                return;
+            }
+            if (formData.id <= 0) {
+                this.$set(formData, 'name', newName)
+                callback()
+                return;
+            }
+            this.$store.dispatch("call", {
+                url: 'project/flow/save',
+                data: {
+                    project_id: this.projectId,
+                    id: formData.id,
+                    name: newName,
+                },
+                method: 'post',
+            }).then(({msg}) => {
+                callback()
+                $.messageSuccess(msg)
+                this.$set(formData, 'name', newName)
+            }).catch(({msg}) => {
+                callback()
+                $A.modalError(msg);
+                this.getData();
+            });
+        },
+
         onSave(formData) {
             let sort = 0;
             formData.project_flow_item.some(item => {
@@ -433,6 +485,8 @@ export default {
                 url: 'project/flow/save',
                 data: {
                     project_id: this.projectId,
+                    id: formData.id,
+                    name: formData.name,
                     flows: formData.project_flow_item,
                 },
                 method: 'post',

@@ -1,6 +1,6 @@
 <template>
     <div class="quick-edit" :class="[alwaysIcon ? 'quick-always' : '']">
-        <div v-if="isEdit" v-clickoutside="onEnter" class="quick-input">
+        <div v-if="isEdit" v-clickoutside="onEnter" class="quick-input" @click.stop="">
             <TagInput v-if="isTag" ref="input" v-model="content" :disabled="isLoad" @on-enter="onEnter"/>
             <Input v-else ref="input" v-model="content" :disabled="isLoad" @on-enter="onEnter"/>
             <div v-if="isLoad" class="quick-loading"><Loading/></div>

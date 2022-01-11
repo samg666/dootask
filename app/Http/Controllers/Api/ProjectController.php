@@ -1576,7 +1576,9 @@ class ProjectController extends AbstractController
      * @apiName flow__save
      *
      * @apiParam {Number} project_id               项目ID
-     * @apiParam {Array} flows                     工作流数据
+     * @apiParam {Number} id                       工作流ID（小于1自动创建）
+     * @apiParam {String} [name]                   工作流数据
+     * @apiParam {Array} [flows]                   工作流数据
      *
      * @apiSuccess {Number} ret     返回状态码（1正确、0错误）
      * @apiSuccess {String} msg     返回信息（错误描述）
@@ -1586,21 +1588,33 @@ class ProjectController extends AbstractController
     {
         User::auth();
         //
-        $project_id = intval(Base::getContentValue('project_id'));
-        $flows = Base::getContentValue('flows');
+        parse_str(Request::getContent(), $data);
+        $id = intval($data['id']);
+        $project_id = intval($data['project_id']);
         //
-        if (!is_array($flows)) {
-            return Base::retError('参数错误');
+        if (Arr::exists($data, 'name')) {
+            if (strlen($data['name']) < 2 || strlen($data['name']) > 50) {
+                return Base::retError('名称不能超过50个字节');
+            }
         }
-        if (count($flows) > 10) {
-            return Base::retError('流程状态最多不能超过10个');
+        if (Arr::exists($data, 'flows')) {
+            if (!is_array($data['flows'])) {
+                return Base::retError('参数错误');
+            }
+            if (count($data['flows']) > 10) {
+                return Base::retError('流程状态最多不能超过10个');
+            }
         }
         //
         $project = Project::userProject($project_id, true, true);
         //
-        return AbstractModel::transaction(function() use ($project, $flows) {
-            $projectFlow = ProjectFlow::whereProjectId($project->id)->first();
-            if (empty($projectFlow)) {
+        return AbstractModel::transaction(function() use ($id, $data, $project) {
+            if ($id > 0) {
+                $projectFlow = ProjectFlow::whereProjectId($project->id)->find($id);
+                if (empty($projectFlow)) {
+                    throw new ApiException('工作流不存在或已被删除');
+                }
+            } else {
                 $projectFlow = ProjectFlow::createInstance([
                     'project_id' => $project->id,
                     'name' => 'Default'
@@ -1610,69 +1624,78 @@ class ProjectController extends AbstractController
                 }
             }
             //
-            $ids = [];
-            $idc = [];
-            $hasStart = false;
-            $hasEnd = false;
-            foreach ($flows as $item) {
-                $id = intval($item['id']);
-                $turns = Base::arrayRetainInt($item['turns'] ?: [], true);
-                $userids = Base::arrayRetainInt($item['userids'] ?: [], true);
-                $flow = ProjectFlowItem::updateInsert([
-                    'id' => $id,
-                    'project_id' => $project->id,
-                    'flow_id' => $projectFlow->id,
-                ], [
-                    'name' => trim($item['name']),
-                    'status' => trim($item['status']),
-                    'sort' => intval($item['sort']),
-                    'turns' => $turns,
-                    'userids' => $userids,
-                    'usertype' => $item['usertype'],
-                ]);
-                if ($flow) {
-                    $ids[] = $flow->id;
-                    if ($flow->id != $id) {
-                        $idc[$id] = $flow->id;
-                    }
-                    if ($flow->status == 'start') {
-                        $hasStart = true;
-                    }
-                    if ($flow->status == 'end') {
-                        $hasEnd = true;
-                    }
-                }
+            if (Arr::exists($data, 'name')) {
+                $projectFlow->name = $data['name'];
+                $projectFlow->save();
             }
-            if (!$hasStart) {
-                throw new ApiException('至少需要1个开始状态');
-            }
-            if (!$hasEnd) {
-                throw new ApiException('至少需要1个结束状态');
-            }
-            ProjectFlowItem::whereFlowId($projectFlow->id)->whereNotIn('id', $ids)->chunk(100, function($list) {
-                foreach ($list as $item) {
-                    $item->deleteFlowItem();
-                }
-            });
             //
-            $projectFlow = ProjectFlow::with(['projectFlowItem'])->whereProjectId($project->id)->find($projectFlow->id);
-            $itemIds = $projectFlow->projectFlowItem->pluck('id')->toArray();
-            foreach ($projectFlow->projectFlowItem as $item) {
-                $turns = $item->turns;
-                foreach ($idc as $oid => $nid) {
-                    if (in_array($oid, $turns)) {
-                        $turns = array_diff($turns, [$oid]);
-                        $turns[] = $nid;
+            if (Arr::exists($data, 'flows')) {
+                $flows = $data['flows'];
+                $ids = [];
+                $idc = [];
+                $hasStart = false;
+                $hasEnd = false;
+                foreach ($flows as $item) {
+                    $id = intval($item['id']);
+                    $turns = Base::arrayRetainInt($item['turns'] ?: [], true);
+                    $userids = Base::arrayRetainInt($item['userids'] ?: [], true);
+                    $flow = ProjectFlowItem::updateInsert([
+                        'id' => $id,
+                        'project_id' => $project->id,
+                        'flow_id' => $projectFlow->id,
+                    ], [
+                        'name' => trim($item['name']),
+                        'status' => trim($item['status']),
+                        'sort' => intval($item['sort']),
+                        'turns' => $turns,
+                        'userids' => $userids,
+                        'usertype' => $item['usertype'],
+                    ]);
+                    if ($flow) {
+                        $ids[] = $flow->id;
+                        if ($flow->id != $id) {
+                            $idc[$id] = $flow->id;
+                        }
+                        if ($flow->status == 'start') {
+                            $hasStart = true;
+                        }
+                        if ($flow->status == 'end') {
+                            $hasEnd = true;
+                        }
                     }
                 }
-                if (!in_array($item->id, $turns)) {
-                    $turns[] = $item->id;
+                if (!$hasStart) {
+                    throw new ApiException('至少需要1个开始状态');
                 }
-                $turns = array_values(array_filter(array_unique(array_intersect($turns, $itemIds))));
-                sort($turns);
-                $item->turns = $turns;
-                ProjectFlowItem::whereId($item->id)->update([ 'turns' => Base::array2json($turns) ]);
+                if (!$hasEnd) {
+                    throw new ApiException('至少需要1个结束状态');
+                }
+                ProjectFlowItem::whereFlowId($projectFlow->id)->whereNotIn('id', $ids)->chunk(100, function($list) {
+                    foreach ($list as $item) {
+                        $item->deleteFlowItem();
+                    }
+                });
+                //
+                $projectFlow = ProjectFlow::with(['projectFlowItem'])->whereProjectId($project->id)->find($projectFlow->id);
+                $itemIds = $projectFlow->projectFlowItem->pluck('id')->toArray();
+                foreach ($projectFlow->projectFlowItem as $item) {
+                    $turns = $item->turns;
+                    foreach ($idc as $oid => $nid) {
+                        if (in_array($oid, $turns)) {
+                            $turns = array_diff($turns, [$oid]);
+                            $turns[] = $nid;
+                        }
+                    }
+                    if (!in_array($item->id, $turns)) {
+                        $turns[] = $item->id;
+                    }
+                    $turns = array_values(array_filter(array_unique(array_intersect($turns, $itemIds))));
+                    sort($turns);
+                    $item->turns = $turns;
+                    ProjectFlowItem::whereId($item->id)->update([ 'turns' => Base::array2json($turns) ]);
+                }
             }
+            //
             return Base::retSuccess('保存成功', $projectFlow);
         });
     }
