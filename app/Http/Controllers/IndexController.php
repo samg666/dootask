@@ -39,6 +39,15 @@ class IndexController extends InvokeController
     }
 
     /**
+     * 获取版本号
+     * @return string
+     */
+    public function version()
+    {
+        return Base::getVersion();
+    }
+
+    /**
      * 接口文档
      * @return \Illuminate\Http\RedirectResponse
      */

@@ -346,6 +346,23 @@ class SystemController extends AbstractController
     }
 
     /**
+     * @api {get} api/system/get/version          10. 获取版本号
+     *
+     * @apiVersion 1.0.0
+     * @apiGroup system
+     * @apiName get__version
+     *
+     * @apiSuccess {Number} ret     返回状态码（1正确、0错误）
+     * @apiSuccess {String} msg     返回信息（错误描述）
+     * @apiSuccess {Object} data    返回数据
+     */
+    public function get__version() {
+        return [
+            'version' => Base::getVersion()
+        ];
+    }
+
+    /**
      * @api {post} api/system/imgupload          11. 上传图片
      *
      * @apiDescription 需要token身份

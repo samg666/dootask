@@ -24,7 +24,7 @@
             class-name="common-right-bottom-notification">
             <div slot="header" class="notification-head">
                 <div class="notification-title">{{$L('发现新版本')}}</div>
-                <Tag color="volcano">{{repoReleases.tag_name}}</Tag>
+                <Tag color="volcano">v{{systemVersion}} -&gt; {{repoReleases.tag_name}}</Tag>
             </div>
             <MarkdownPreview class="notification-body overlay-y" :initialValue="repoReleases.body"/>
         </Modal>
@@ -44,6 +44,9 @@ export default {
         return {
             loadIng: 0,
 
+            apiVersion: '',
+            systemVersion: window.systemInfo.version,
+
             repoName: 'kuaifan/dootask',
             repoData: {},
             repoStatus: 0,  // 0 没有，1有客户端，2客户端有新版本
@@ -56,7 +59,7 @@ export default {
         }
     },
     mounted() {
-        this.getReleases();
+        this.getVersion()
         //
         this.subscribe = Store.subscribe('releasesNotification', () => {
             this.updateWinShow = true;
@@ -100,10 +103,14 @@ export default {
         wsOpenNum(num) {
             if (num <= 1) return
             this.wsOpenTimeout && clearTimeout(this.wsOpenTimeout)
-            this.wsOpenTimeout = setTimeout(this.getReleases, 5000)
+            this.wsOpenTimeout = setTimeout(this.getVersion, 5000)
         },
     },
     methods: {
+        tagToVersion(tag_name) {
+            return tag_name ? $A.leftDelete(tag_name.toLowerCase(), "v") : ''
+        },
+
         compareVersion(version1, version2) {
             let pA = 0, pB = 0;
             // 寻找当前区间的版本号
@@ -148,6 +155,17 @@ export default {
             return 0;
         },
 
+        getVersion() {
+            axios.get($A.apiUrl('../version')).then(({status, data}) => {
+                if (status === 200) {
+                    this.apiVersion = data
+                    this.getReleases()
+                }
+            }).catch(_ => {
+
+            });
+        },
+
         getReleases() {
             if (this.repoStatus > 0) {
                 return;
@@ -156,31 +174,38 @@ export default {
                 return;
             }
             //
-            let cache = $A.getStorageJson("cacheAppdown");
+            let key = "cacheAppdown::" + this.apiVersion
+            let cache = $A.getStorageJson(key);
             let timeout = 600;
             if (cache.time && cache.time + timeout > Math.round(new Date().getTime() / 1000)) {
                 this.repoReleases = cache.data;
                 this.chackReleases()
-                setTimeout(this.getReleases, timeout * 1000)
+                setTimeout(this.getVersion, timeout * 1000)
                 return;
             }
             //
             this.loadIng++;
-            axios.get("https://api.github.com/repos/" + this.repoName + "/releases/latest").then(({status, data}) => {
+            axios.get("https://api.github.com/repos/" + this.repoName + "/releases").then(({status, data}) => {
                 this.loadIng--;
-                if (status === 200) {
-                    cache = {
-                        time: Math.round(new Date().getTime() / 1000),
-                        data: data
+                if (status === 200 && $A.isArray(data)) {
+                    cache.time = Math.round(new Date().getTime() / 1000)
+                    cache.data = data.find(({tag_name}) => this.compareVersion(this.tagToVersion(tag_name), this.apiVersion) === 0) || {}
+                    if (this.$Electron) {
+                        let array = data.filter(({tag_name}) => this.compareVersion(this.tagToVersion(tag_name), this.systemVersion) === 1);
+                        if (array.length > 1) {
+                            cache.data.body = array.map(({tag_name, body}) => {
+                                return `# ${tag_name}\n${body}\n`
+                            }).join(`\n`)
+                        }
                     }
-                    $A.setStorage("cacheAppdown", cache);
+                    $A.setStorage(key, cache);
                     this.repoReleases = cache.data;
                     this.chackReleases()
                 }
-                setTimeout(this.getReleases, timeout * 1000)
+                setTimeout(this.getVersion, timeout * 1000)
             }).catch(() => {
                 this.loadIng--;
-                setTimeout(this.getReleases, timeout * 1000)
+                setTimeout(this.getVersion, timeout * 1000)
             });
         },
 
@@ -207,9 +232,8 @@ export default {
                 if (!this.repoData) {
                     return;
                 }
-                let currentVersion = window.systemInfo.version;
-                let latestVersion = $A.leftDelete(this.repoReleases.tag_name.toLowerCase(), "v")
-                if (this.compareVersion(latestVersion, currentVersion) === 1) {
+                let latestVersion = this.tagToVersion(this.repoReleases.tag_name)
+                if (this.compareVersion(latestVersion, this.systemVersion) === 1) {
                     // 有新版本
                     console.log("New version: " + latestVersion);
                     this.$Electron.sendMessage('downloadFile', {
@@ -220,7 +244,7 @@ export default {
                 // 网页版（提示有客户端下载）
                 this.repoData = (this.repoReleases.assets || []).find(({name}) => $A.strExists(name, hostName));
                 if (this.repoData) {
-                    let latestVersion = $A.leftDelete(this.repoReleases.tag_name.toLowerCase(), "v")
+                    let latestVersion = this.tagToVersion(this.repoReleases.tag_name)
                     console.log("Exist client: " + latestVersion);
                     this.repoStatus = 1;
                 }
